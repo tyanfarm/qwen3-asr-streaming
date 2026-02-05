@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Live Transcription</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            background: linear-gradient(90deg, #ff6b6b, #ee5a6f);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            justify-content: center;
+        }
+
+        button {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 10px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 16px;
+        }
+
+        #startBtn {
+            background: linear-gradient(90deg, #00d9ff, #00ff88);
+            color: #1a1a2e;
+        }
+
+        #stopBtn {
+            background: linear-gradient(90deg, #ff6b6b, #ee5a6f);
+            color: white;
+            display: none;
+        }
+
+        button:hover {
+            transform: scale(1.05);
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-box {
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #00ff88;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.6);
+            margin-top: 5px;
+        }
+
+        .transcript-box {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 20px;
+            min-height: 400px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .transcript-line {
+            margin-bottom: 12px;
+            padding: 10px 15px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            border-left: 3px solid #00d9ff;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .timestamp {
+            color: #00d9ff;
+            font-size: 12px;
+            margin-right: 10px;
+            font-weight: bold;
+        }
+
+        .text {
+            color: #fff;
+        }
+
+        .latency {
+            color: #00ff88;
+            font-size: 11px;
+            float: right;
+            background: rgba(0, 255, 136, 0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .status {
+            text-align: center;
+            padding: 20px;
+            color: rgba(255, 255, 255, 0.6);
+            font-style: italic;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🎙️ Live Screen Audio (Low Latency)</h1>
+
+        <div class="controls">
+            <button id="startBtn" onclick="startCapture()">📺 Capture Tab Audio</button>
+            <button id="stopBtn" onclick="stopCapture()">⏹️ Stop</button>
+        </div>
+
+        <div class="stats">
+            <div class="stat-box">
+                <div class="stat-value" id="avgLatency">--</div>
+                <div class="stat-label">Avg Latency (ms)</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="duration">00:00</div>
+                <div class="stat-label">Duration</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="language">--</div>
+                <div class="stat-label">Language</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="chunksSent">0</div>
+                <div class="stat-label">Chunks Sent</div>
+            </div>
+        </div>
+
+        <div class="transcript-box" id="transcript">
+            <div class="status">Click "Capture Tab Audio" to start</div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let audioContext = null;
+        let processor = null;
+        let latencies = [];
+        let startTime = null;
+        let chunkCount = 0;
+
+        async function startCapture() {
+            try {
+                const stream = await navigator.mediaDevices.getDisplayMedia({
+                    video: true,
+                    audio: {
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        sampleRate: 16000
+                    }
+                });
+
+                ws = new WebSocket('ws://localhost:8765');
+
+                ws.onopen = () => {
+                    console.log('Connected');
+                    startRecording(stream);
+                };
+
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    handleMessage(data);
+                };
+
+                ws.onerror = () => {
+                    alert('Connection failed. Is server running?');
+                    stopCapture();
+                };
+
+            } catch (err) {
+                console.error(err);
+                alert('Failed to capture audio');
+            }
+        }
+
+        function startRecording(stream) {
+            const audioTrack = stream.getAudioTracks()[0];
+            if (!audioTrack) {
+                alert('No audio track found');
+                return;
+            }
+
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                sampleRate: 16000
+            });
+
+            const source = audioContext.createMediaStreamSource(new MediaStream([audioTrack]));
+            processor = audioContext.createScriptProcessor(8192, 1, 1);
+
+            processor.onaudioprocess = (e) => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    const inputData = e.inputBuffer.getChannelData(0);
+
+                    // Convert to Int16
+                    const int16Data = new Int16Array(inputData.length);
+                    for (let i = 0; i < inputData.length; i++) {
+                        const s = Math.max(-1, Math.min(1, inputData[i]));
+                        int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                    }
+
+                    ws.send(int16Data.buffer);
+                    chunkCount++;
+                    document.getElementById('chunksSent').textContent = chunkCount;
+                }
+            };
+
+            source.connect(processor);
+            processor.connect(audioContext.destination);
+
+            startTime = Date.now();
+            document.getElementById('startBtn').style.display = 'none';
+            document.getElementById('stopBtn').style.display = 'block';
+            document.getElementById('transcript').innerHTML = '<div class="status">Listening...</div>';
+
+            setInterval(updateDuration, 1000);
+        }
+
+        function stopCapture() {
+            if (processor) processor.disconnect();
+            if (audioContext) audioContext.close();
+            if (ws) ws.close();
+
+            document.getElementById('startBtn').style.display = 'block';
+            document.getElementById('stopBtn').style.display = 'none';
+        }
+
+        function updateDuration() {
+            if (!startTime) return;
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            const mins = Math.floor(elapsed / 60);
+            const secs = elapsed % 60;
+            document.getElementById('duration').textContent =
+                `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function handleMessage(data) {
+            const transcriptBox = document.getElementById('transcript');
+
+            if (data.type === 'status') {
+                const statusEl = transcriptBox.querySelector('.status');
+                if (statusEl) statusEl.textContent = data.message;
+            }
+            else if (data.type === 'transcription') {
+                const statusEl = transcriptBox.querySelector('.status');
+                if (statusEl) statusEl.remove();
+
+                const line = document.createElement('div');
+                line.className = 'transcript-line';
+                line.innerHTML = `
+                    <span class="timestamp">[${formatTime(data.timestamp)}]</span>
+                    <span class="text">${data.text}</span>
+                    <span class="latency">${data.latency_ms}ms</span>
+                `;
+                transcriptBox.appendChild(line);
+                transcriptBox.scrollTop = transcriptBox.scrollHeight;
+
+                if (data.latency_ms) {
+                    latencies.push(data.latency_ms);
+                    const avg = latencies.reduce((a, b) => a + b, 0) / latencies.length;
+                    document.getElementById('avgLatency').textContent = avg.toFixed(1);
+                }
+                if (data.language) {
+                    document.getElementById('language').textContent = data.language;
+                }
+            }
+        }
+
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+    </script>
+</body>
+
+</html>
