@@ -251,7 +251,7 @@ async def main():
         model="Qwen/Qwen3-ASR-1.7B",
         gpu_memory_utilization=0.5,
         max_new_tokens=64,
-        enforce_eager=True,
+        enforce_eager=False,
         max_inference_batch_size=2,
         max_model_len=4096,
     )
