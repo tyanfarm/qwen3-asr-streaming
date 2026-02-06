@@ -18,7 +18,7 @@ The WebSocket API is available at `ws://localhost:8765`.
 
    - Open `http://localhost:9000/simple_live_client.html` in your browser.
 
-3. Enter a YouTube URL and click Start to begin transcription.
+3. Enter a Youtube video URL and start streaming.
 
 ## Simple Streaming with Youtube Audio
 
